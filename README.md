@@ -3,84 +3,78 @@
 **Contribution Number:** 1 
 **Student:** Stan Riane Nelson  
 **Issue:** https://github.com/Qiskit/qiskit/issues/9962  
-**Status:** Phase I  Complete
+**Status:** Phase II Complete
 
 ---
 
 ## Why I Chose This Issue
 I chose issue #9962, 'Support zero-operand instructions in circuit drawers' in Qiskit, because it allows me to work within a high-performance Python/Rust ecosystem, aligning with my systems-level development background. The scope is highly specific, targeting the visualization layer rather than the core quantum matrix algorithms. Furthermore, analyzing the stalled 2024 PR for this issue will provide an excellent architectural starting point for my Phase II reproduction.
 
-
 ---
 
 ## Understanding the Issue
 
 ### Problem Description
-
-[In your own words, what's broken or missing?]
+Zero-operand instructions (such as `GlobalPhaseGate`) fail to render correctly in the visual circuit drawers. Because these gates act on the entire circuit state rather than specific target qubits, they lack the standard operand arguments (`qargs`) that the UI layout engines rely on to calculate coordinate placement and box spans.
 
 ### Expected Behavior
-
-[What should happen?]
+A zero-qubit gate should occupy its own dedicated vertical column to indicate its place in the circuit's timeline, and it should be drawn as a unified box visually spanning all circuit wires (without explicit target markers).
 
 ### Current Behavior
-
-[What actually happens?]
+In the `matplotlib` drawer, a previous architectural hack forces zero-qubit gates to reset their internal x-index to 0, causing multiple zero-qubit gates to render directly on top of each other at the beginning of the circuit. In the `text` drawer, the gate attempts to render but fails to draw the vertical box lines connecting the wires, and suffers from string misalignment on the bottom wire.
 
 ### Affected Components
-
-[Which parts of the codebase are involved?]
+- `qiskit/visualization/circuit/matplotlib.py` (specifically `_get_coords` and `_zero_qubit_gate`)
+- `qiskit/visualization/circuit/text.py` (specifically `_set_zero_qubit_operandbox`)
+- `NodeData` class (coordinate storage)
 
 ---
 
 ## Reproduction Process
 
 ### Environment Setup
-
-[Notes on setting up your local development environment - challenges you faced, how you solved them]
+Cloned my fork (`https://github.com/KevesDev/qiskit`) locally using GitHub Desktop. Created a clean Python virtual environment and installed the Qiskit visualization development dependencies (`pip install --no-cache-dir -e '.[visualization]'`). Corrected a cross-compilation toolchain mismatch by explicitly targeting the 64-bit Windows MSVC Rust toolchain to match the Python interpreter.
 
 ### Steps to Reproduce
-
-1. [Step 1]
-2. [Step 2]
-3. [Observed result]
+1. Initialize a `QuantumCircuit(5)`.
+2. Append standard single/multi-qubit gates, followed by consecutive `GlobalPhaseGate(np.pi)` insertions.
+3. Call `circ.draw('mpl')` and `circ.draw('text')` and observe the output.
 
 ### Reproduction Evidence
-
-- **Commit showing reproduction:** [Link to commit in your fork]
-- **Screenshots/logs:** [If applicable]
-- **My findings:** [What you discovered during reproduction]
+- **Commit showing reproduction:** https://github.com/KevesDev/qiskit/blob/fix-zero-operand-drawers/reproduce.py
+- **Screenshots/logs:** https://github.com/KevesDev/su26-ai301-contribution/blob/main/mpl_bug.png
+- **My findings:** Confirmed that the upstream layer assignment (`_LayerSpooler`) works perfectly, meaning the core engine is sound. The bug is localized entirely to the rendering loops in the `text` and `matplotlib` visualization modules.
 
 ---
 
 ## Solution Approach
 
 ### Analysis
-
-[Your analysis of the root cause - what's causing the issue?]
+The root cause in `matplotlib` is a breach of a structural invariant. The code currently attempts to inject all qubits into the `q_indxs` array for zero-operand gates so the renderer has something to draw. However, `q_xy` is contractually obligated to map 1:1 with explicit `qargs`. This hack breaks the coordinate system. In `text.py`, the `bit_indices` loop uses a tautological condition (`x in self.qubits`) and relies on hardcoded string padding that misaligns on circuits with 10+ qubits.
 
 ### Proposed Solution
-
-[High-level description of your fix approach]
+Instead of mutating the active operand arrays, we will explicitly calculate the bounding top and bottom wire coordinates for zero-operand gates and store them safely in new, dedicated attributes. The rendering functions will then be updated to read from these new attributes, preserving the core engine invariants.
 
 ### Implementation Plan
+Using UMPIRE framework:
 
-Using UMPIRE framework (adapted):
+**Understand:** Zero-operand gates need a visual span across all wires without breaking data invariants tied to explicit operands.
 
-**Understand:** [Restate the problem]
+**Match:** The `latex.py` drawer handles this gracefully by deriving coordinates directly from `self._qubits` rather than `node.qargs`. We will replicate this isolation pattern in `matplotlib` and `text`.
 
-**Match:** [What similar patterns/solutions exist in the codebase?]
+**Plan:**
+1. Modify `NodeData.__init__` in `matplotlib.py` to add `zero_wire_top` and `zero_wire_bot` variables.
+2. Update `_get_coords` in `matplotlib.py` to safely compute these boundary coordinates for zero-operand nodes without modifying `q_xy` or `q_indxs`.
+3. Rewrite `_zero_qubit_gate` in `matplotlib.py` to draw the spanning box using the new attributes.
+4. Update `Layer._set_zero_qubit_operandbox` in `text.py` to iterate explicitly over `range(len(self.qubits))` and dynamically calculate padding (`wire_label_len`) to fix the visual borders.
 
-**Plan:** [Step-by-step implementation plan]
-1. [Modify file X to do Y]
-2. [Add function Z]
-3. [Update tests]
+**Implement:** [Link to branch/commits as I work in Phase III]
 
-**Implement:** [Link to your branch/commits as you work]
+**Review:** - [ ] Does it maintain Qiskit's `q_xy <-> qargs` invariant?
+- [ ] Do zero-operand gates correctly reserve their own width/column?
+- [ ] Does the text drawer alignment hold up on circuits with >10 qubits?
 
-**Review:** [Self-review checklist - does it follow the project's contribution guidelines?]
-
-**Evaluate:** [How will you verify it works?]
+**Evaluate:** Execute the local reproduction script to verify consecutive `GlobalPhaseGate`s occupy distinct columns and render clean, connected boxes in both drawers.
 
 ---
 
@@ -156,3 +150,5 @@ Using UMPIRE framework (adapted):
 - [Link to helpful documentation]
 - [Tutorial or Stack Overflow post that helped]
 - [GitHub issues or discussions that helped]
+
+```
