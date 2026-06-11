@@ -42,7 +42,7 @@ Cloned my fork (`https://github.com/KevesDev/qiskit`) locally using GitHub Deskt
 
 ### Reproduction Evidence
 - **Commit showing reproduction:** https://github.com/KevesDev/qiskit/blob/fix-zero-operand-drawers/reproduce.py
-- **Screenshots/logs:** https://github.com/KevesDev/su26-ai301-contribution/blob/main/mpl_bug.png
+- **Screenshots/logs:** ![Matplotlib Bug](https://github.com/KevesDev/su26-ai301-contribution/blob/main/mpl_bug.png?raw=true)
 - **My findings:** Confirmed that the upstream layer assignment (`_LayerSpooler`) works perfectly, meaning the core engine is sound. The bug is localized entirely to the rendering loops in the `text` and `matplotlib` visualization modules.
 
 ---
@@ -50,7 +50,7 @@ Cloned my fork (`https://github.com/KevesDev/qiskit`) locally using GitHub Deskt
 ## Solution Approach
 
 ### Analysis
-The root cause in `matplotlib` is a breach of a structural invariant. The code currently attempts to inject all qubits into the `q_indxs` array for zero-operand gates so the renderer has something to draw. However, `q_xy` is contractually obligated to map 1:1 with explicit `qargs`. This hack breaks the coordinate system. In `text.py`, the `bit_indices` loop uses a tautological condition (`x in self.qubits`) and relies on hardcoded string padding that misaligns on circuits with 10+ qubits. By reviewing the git log and the commit history of the stalled PR (#12922), I traced the exact origin of the rendering bug. The root cause in matplotlib is a breach of a structural invariant... (continue with the rest of your paragraph)
+By reviewing the git log and the commit history of the stalled PR (#12922), I traced the exact origin of the rendering bug. The root cause in `matplotlib` is a breach of a structural invariant. The code currently attempts to inject all qubits into the `q_indxs` array for zero-operand gates so the renderer has something to draw. However, `q_xy` is contractually obligated to map 1:1 with explicit `qargs`. This hack breaks the coordinate system. In `text.py`, the `bit_indices` loop uses a tautological condition (`x in self.qubits`) and relies on hardcoded string padding that misaligns on circuits with 10+ qubits.
 
 ### Proposed Solution
 Instead of mutating the active operand arrays, we will explicitly calculate the bounding top and bottom wire coordinates for zero-operand gates and store them safely in new, dedicated attributes. The rendering functions will then be updated to read from these new attributes, preserving the core engine invariants.
@@ -148,7 +148,3 @@ Using UMPIRE framework:
 ## Resources Used
 
 - [Link to helpful documentation]
-- [Tutorial or Stack Overflow post that helped]
-- [GitHub issues or discussions that helped]
-
-```
