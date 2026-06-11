@@ -50,7 +50,7 @@ Cloned my fork (`https://github.com/KevesDev/qiskit`) locally using GitHub Deskt
 ## Solution Approach
 
 ### Analysis
-The root cause in `matplotlib` is a breach of a structural invariant. The code currently attempts to inject all qubits into the `q_indxs` array for zero-operand gates so the renderer has something to draw. However, `q_xy` is contractually obligated to map 1:1 with explicit `qargs`. This hack breaks the coordinate system. In `text.py`, the `bit_indices` loop uses a tautological condition (`x in self.qubits`) and relies on hardcoded string padding that misaligns on circuits with 10+ qubits.
+The root cause in `matplotlib` is a breach of a structural invariant. The code currently attempts to inject all qubits into the `q_indxs` array for zero-operand gates so the renderer has something to draw. However, `q_xy` is contractually obligated to map 1:1 with explicit `qargs`. This hack breaks the coordinate system. In `text.py`, the `bit_indices` loop uses a tautological condition (`x in self.qubits`) and relies on hardcoded string padding that misaligns on circuits with 10+ qubits. By reviewing the git log and the commit history of the stalled PR (#12922), I traced the exact origin of the rendering bug. The root cause in matplotlib is a breach of a structural invariant... (continue with the rest of your paragraph)
 
 ### Proposed Solution
 Instead of mutating the active operand arrays, we will explicitly calculate the bounding top and bottom wire coordinates for zero-operand gates and store them safely in new, dedicated attributes. The rendering functions will then be updated to read from these new attributes, preserving the core engine invariants.
