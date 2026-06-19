@@ -3,7 +3,8 @@
 **Contribution Number:** 1 
 **Student:** Stan Riane Nelson  
 **Issue:** https://github.com/Qiskit/qiskit/issues/9962  
-**Status:** Phase III Complete
+**Pull Request:** https://github.com/Qiskit/qiskit/pull/16453  
+**Status:** Phase IV Complete — Awaiting review
 
 ---
 
@@ -44,7 +45,7 @@ Cloned my fork (`https://github.com/KevesDev/qiskit`) locally using GitHub Deskt
 3. Call `circ.draw('mpl')` and `circ.draw('text')` and observe the output.
 
 ### Reproduction Evidence
-- **Commit showing reproduction:** https://github.com/KevesDev/qiskit/blob/fix-zero-operand-drawers/reproduce.py
+- **Commit showing reproduction:** https://github.com/KevesDev/qiskit/blob/92da65f7cd60959a26da0592d1d945ba8af2382d/reproduce.py (linked by commit SHA rather than branch name — the script itself was removed before opening the PR, since a loose root-level script isn't idiomatic for a Qiskit contribution and the real unit tests now cover the same reproduction; see Phase IV notes below.)
 - **Screenshots/logs:** ![Matplotlib Bug](https://github.com/KevesDev/su26-ai301-contribution/blob/main/mpl_bug.png?raw=true) (this screenshot is the *original*, pre-fix bug — both `GlobalPhaseGate` calls are completely invisible; there is no "stacked boxes" artifact like I'd originally assumed.)
 - **My findings (Phase II):** Confirmed that the upstream layer assignment (`_LayerSpooler`) works perfectly, meaning the core engine is sound. The bug is localized entirely to the rendering loops in the `text` and `matplotlib` visualization modules.
 - **My findings (Phase III, corrected):** That Phase II finding was wrong. `_LayerSpooler` never sees zero-qarg nodes at all — `dag.layers()` (which it iterates) only ever visits nodes reachable by walking the DAG's wires, and a `GlobalPhaseGate` has no wires. The node is dropped before the rendering loops ever get a chance to run. I confirmed this directly:
@@ -155,49 +156,57 @@ For matplotlib specifically, I did not add a pixel-diff snapshot test to `test/v
   - `test/python/visualization/references/test_latex_zero_operand_gate.tex` (new)
   - `test/python/visualization/references/test_latex_zero_operand_gate_single_qubit.tex` (new)
   - `releasenotes/notes/fix-zero-operand-drawers-5b92cd1d081d2aeb.yaml` (new)
-- **Key commits** (branch: [`fix-zero-operand-drawers`](https://github.com/KevesDev/qiskit/tree/fix-zero-operand-drawers)):
-  - [`b26dabe3f`](https://github.com/KevesDev/qiskit/commit/b26dabe3f3fc603855fd8b3bc22b5fe6063f6857) — Fix zero-operand instructions being dropped from circuit layering
-  - [`91dc3f5a1`](https://github.com/KevesDev/qiskit/commit/91dc3f5a1fa4e78de18cad07c53a8c3917f0c736) — Render zero-operand instructions in the text circuit drawer
-  - [`910642f56`](https://github.com/KevesDev/qiskit/commit/910642f565a676813d309f20d1e9d35f73b7ab7e) — Render zero-operand instructions in the matplotlib circuit drawer
-  - [`5db983e11`](https://github.com/KevesDev/qiskit/commit/5db983e1187d9d1f4cc17c105ce0604f349cf126) — Render zero-operand instructions in the LaTeX circuit drawer
-  - [`db78fe6fd`](https://github.com/KevesDev/qiskit/commit/db78fe6fdc13d0ec294f73aa2bbfec5418e0109b) — Add release note for zero-operand drawer fix
+- **Key commits** (branch: [`fix-zero-operand-drawers`](https://github.com/KevesDev/qiskit/tree/fix-zero-operand-drawers); rebased onto upstream `main` before opening the PR, so these are the final SHAs, not the original Phase III ones):
+  - [`05c2558fb`](https://github.com/KevesDev/qiskit/commit/05c2558fbdd66f232aa89cc0610bf32bd84f1793) — Fix zero-operand instructions being dropped from circuit layering
+  - [`9a9c8479c`](https://github.com/KevesDev/qiskit/commit/9a9c8479c557b6606c553d58d1aab8c2c162fa3e) — Render zero-operand instructions in the text circuit drawer
+  - [`844400b0e`](https://github.com/KevesDev/qiskit/commit/844400b0e436f76248e5f815a7c6db33dcabf0d4) — Render zero-operand instructions in the matplotlib circuit drawer
+  - [`5e3f552c3`](https://github.com/KevesDev/qiskit/commit/5e3f552c3fadb35ea09512143f4ac9ddf8b12cf3) — Render zero-operand instructions in the LaTeX circuit drawer
+  - [`95e23ef99`](https://github.com/KevesDev/qiskit/commit/95e23ef9963d8a2e21906dbbe974a63629bf55aa) — Add release note for zero-operand drawer fix
+  - [`12b9c5e9f`](https://github.com/KevesDev/qiskit/commit/12b9c5e9fe55f4d3fee96d94fe5e53b088f9e7a1) — Remove local-only reproduction script before PR submission (Phase IV)
+  - [`4118f4da2`](https://github.com/KevesDev/qiskit/commit/4118f4da245513b62ed9b568809180a9dd201a65) — Exclude classical directives from zero-operand layer insertion (Phase IV)
 - **Approach decisions:**
   - Matched nodes by `(qargs, cargs)` instead of object identity (forced by the DAGOpNode-identity discovery above).
   - Reused each drawer's existing multi-qubit box code via a `skip_wire_labels` flag, instead of writing new parallel "zero-qubit gate" drawing functions (unlike PR #12922) — less code, no duplicated box-drawing logic to keep in sync.
   - Scoped the fix to instructions with *both* zero qargs and zero cargs (not just zero qargs), since a classical-only instruction is already reachable via its clbit wire in `dag.layers()` and doesn't need the same treatment.
   - Did not add a matplotlib snapshot/reference-image test (see Manual Testing) — flagged explicitly as a Phase IV follow-up rather than silently skipped.
 
+### Phase IV Progress (2026-06-24)
+
+**What I did before opening the PR:**
+- Ran the full Step 1 pre-submission checklist: re-confirmed the fix still works, re-ran the full test suite, reviewed `git diff upstream/main` line by line.
+- That diff review caught `reproduce.py` (a loose root-level script from an earlier commit) as an unrelated/non-idiomatic inclusion. Removed it in its own commit, keeping the original commit in history and re-linking the README's reproduction evidence by commit SHA instead of branch name so the link survives the removal.
+- Rebased onto upstream `main` (36 commits ahead at the time) — confirmed first that none of those commits touched any file I'd changed, so the rebase was a clean, conflict-free fast-forward of my changes onto newer history.
+- The rebase pulled in Rust-side changes, which meant the locally-built Rust extension was stale (`ImportError: cannot import name 'estimate_fidelity'`). Rebuilt it (`python setup.py build_rust --inplace`, ~70s) — this incidentally *fixed* 2 of the 4 "pre-existing" test failures I'd been tracking since Phase III, confirming they really were a stale-build artifact and not something in my diff.
+- The rebuild also **surfaced a real bug my fix introduced**: a classical `Store` instruction on a `Var` (used in control-flow tests with standalone variables) also has zero qargs and zero cargs, so my generic "zero-operand" filter caught it too and tried to insert it into a dedicated layer — crashing the text drawer's barrier-handling code (`min()` on empty `qargs`), which had never had to handle a zero-qarg directive before. The correct fix isn't to render `Store` (drawers have never shown it, and shouldn't start now, that's out of scope for #9962) but to exclude directives from the zero-operand layering fix entirely, so they stay exactly as invisible as before. Fixed in [`4118f4da2`](https://github.com/KevesDev/qiskit/commit/4118f4da245513b62ed9b568809180a9dd201a65), with a regression test (`test_nested_if_else_op_var`/`test_nested_switch_op_var`, both pre-existing tests that started failing for this exact reason).
+- While investigating that, found a **second, pre-existing, unrelated bug**: `latex.py`'s `_build_barrier` also crashes on a zero-qarg `Store`, identically before and after any of my changes (confirmed via `git stash`). Did not fix it — it's out of scope for this PR and touches code I have no other reason to be in. Flagging it as a strong Cycle 2 candidate.
+- Force-pushed the rebased, fixed branch with `--force-with-lease`.
+- Picked a reviewer data-driven rather than by guessing: `git log` on the exact files I changed showed Edwin Navarro (`@enavarro51`) as the single most frequent author (17 commits vs. the next-highest at 8) — confirmed his GitHub handle by checking one of his commits directly.
+- Opened the PR and left a review-request comment tagging `@enavarro51`, following the project's own `PULL_REQUEST_TEMPLATE.md` (filled in the AI/LLM disclosure checkboxes naming Claude Code/Sonnet 4.6, since this contribution was built with heavy AI assistance throughout, which I reviewed and take responsibility for).
+
 ---
 
 ## Pull Request
 
-**PR Link:** Not yet opened — per the Phase III instructions ("Move directly to Phase IV... where you'll open a pull request"), I'm holding off on opening the actual PR against `Qiskit/qiskit` until Phase IV, but the description below is ready to use as-is.
+**PR Link:** https://github.com/Qiskit/qiskit/pull/16453
 
-**PR Description (draft, ready for Phase IV):**
+**PR Description:**
+What does this PR do?: Renders zero-operand instructions (most commonly a stand-alone `GlobalPhaseGate`) in the text, matplotlib, and LaTeX circuit drawers, as a box spanning every qubit wire with no per-wire operand index, positioned in original circuit order.
 
-> ### Summary
-> Fixes #9962. Zero-operand instructions (most commonly a stand-alone `GlobalPhaseGate`) were being silently dropped by the text and matplotlib circuit drawers, and were never supported by the LaTeX drawer either — none of the three would show them at all, with no error. The root cause is upstream of all three drawers: `dag.layers()` (consumed by `_get_layered_instructions`/`_LayerSpooler`) only ever visits nodes reachable by walking the DAG's wires, and a zero-operand instruction has none.
->
-> This PR:
-> - Fixes `_get_layered_instructions` in `qiskit/visualization/circuit/_utils.py` to re-insert zero-operand nodes into their correct layer, in original circuit order, matched by `(qargs, cargs)` rather than node identity (`DAGOpNode` identity/equality isn't stable across separate `dag.layers()`/`dag.op_nodes()` calls).
-> - Renders each such node in the text, matplotlib, and LaTeX drawers as a box spanning every qubit wire, with no per-wire operand index (per the resolution proposed in the issue), by extending each drawer's existing multi-qubit box-drawing code with a `skip_wire_labels` option rather than adding new parallel drawing functions.
-> - Fixes a latent bug in `text.py`'s `_set_multibox` (single-bit path forwarded `top_connect=None` into the box constructor, overriding its sensible default) that the new single-qubit test case exposed.
-> - Adds 8 unit tests across `test_utils.py`, `test_circuit_text_drawer.py`, `test_circuit_drawer.py`, and `test_circuit_latex.py`.
->
-> A prior attempt at this issue (#12922) stalled in draft with no tests; its `_LayerSpooler` patch would have inserted every zero-operand node at the very start of the circuit regardless of where it was declared (using `dag.topological_op_nodes()`, which has no ordering for nodes with no dependency edges), and its own commit message called the matplotlib portion "a hack, needs review." This PR fixes the same underlying gap with original-circuit-order placement, reuses existing box-drawing code instead of duplicating it, and includes tests.
->
-> **Known follow-up (not blocking):** no matplotlib snapshot/reference-image test was added; per CONTRIBUTING.md, generating one correctly requires the project's mybinder snapshot-testing notebook, which I'll do as part of addressing review feedback.
->
-> Fixes #9962
->
-> ### AI/LLM disclosure
-> - [x] I used the following tool to help write this PR description: Claude Code (Claude Sonnet 4.6)
-> - [x] I used the following tool to generate or modify code: Claude Code (Claude Sonnet 4.6)
+Why was this PR needed?: All three drawers were silently dropping these instructions entirely, with no error — `circ.draw('text')` would simply omit a `GlobalPhaseGate` call as if it had never been appended. Investigation revealed the root cause is upstream of all three drawers: `_get_layered_instructions` builds its layers from `dag.layers()`, which only visits DAG nodes reachable via wires, and a zero-operand instruction has none.
+
+What are the relevant issue numbers?: Fixes #9962
+
+Does this PR meet the acceptance criteria?:
+- [x] Tests added for new/changed behavior (8 new unit tests, 4 files)
+- [x] All tests passing (245/245 locally, full suite of touched modules)
+- [x] Follows project style guide (`black`, `ruff` both clean)
+- [x] No breaking changes introduced (purely additive — previously-invisible instructions now render)
+- [ ] Documentation updated (n/a beyond the reno release note; no public API changed)
 
 **Maintainer Feedback:**
-- N/A yet — PR not opened.
+- 2026-06-24: PR opened, requested review from @enavarro51 (most frequent contributor to the exact files changed, by git history). No response yet.
 
-**Status:** Ready to open in Phase IV.
+**Status:** Awaiting review.
 
 ---
 
@@ -212,7 +221,10 @@ For matplotlib specifically, I did not add a pixel-diff snapshot test to `test/v
 See "Challenges faced" above — the DAGOpNode identity issue and the two crash regressions (matplotlib, then LaTeX) were the two biggest. Both were caught by re-running the actual reproduction script after each change rather than trusting that a fix in one layer would "just work" everywhere it mattered.
 
 ### What I'd Do Differently Next Time
-I'd check all three drawers for the crash-regression pattern in one pass right after the `_utils.py` fix, rather than discovering the LaTeX one separately, later, only because it was specifically prompted. The pattern ("does anything downstream of this shared fix assume non-empty `qargs`?") was identifiable in advance.
+I'd check all three drawers for the crash-regression pattern in one pass right after the `_utils.py` fix, rather than discovering the LaTeX one separately, later, only because it was specifically prompted. The pattern ("does anything downstream of this shared fix assume non-empty `qargs`?") was identifiable in advance. The same lesson repeated itself in Phase IV with the `Store`/`Var` directive case — a broad, generic filter (any zero-qarg, zero-carg node) caught more than I'd designed for. Next time I'd enumerate the actual *categories* of zero-operand node (real gates vs. directives) up front, rather than discovering the second category by accident during a routine rebuild.
+
+### Phase IV-specific learning
+Rebasing onto 36 upstream commits and rebuilding the Rust extension wasn't just chore work — it changed the actual behavior of my code (by exposing the `Store`/directive case) in a way that purely re-running my own existing tests on a stale build never would have. The pre-submission checklist's "rebase on latest upstream" step isn't just about avoiding merge conflicts; it's a real opportunity to catch interactions with code that didn't exist when you wrote your fix.
 
 ---
 
@@ -220,3 +232,4 @@ I'd check all three drawers for the crash-regression pattern in one pass right a
 - [Qiskit `dagcircuit` source](https://github.com/Qiskit/qiskit/blob/main/crates/circuit/src/dag_circuit.rs) — for understanding why `dag.layers()` is wire-reachability-based.
 - Issue #14538 and its closing PR #15944 — independent confirmation that avoiding `GlobalPhaseGate` due to "visualization issues" is a real, felt workaround elsewhere in the codebase.
 - Stalled PR #12922 (full diff, not just description) — useful negative example: showed the naive layering fix, the no-tests gap, and the matplotlib "hack" to avoid repeating.
+- **Possible Cycle 2 issue:** `latex.py`'s `_build_barrier` crashes on a zero-qarg directive (e.g. `Store` on a `Var`) — confirmed pre-existing and unrelated to this PR, not yet reported upstream.
