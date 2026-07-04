@@ -408,16 +408,23 @@ if len(self._expr_text) > self.expr_len:
 
 The Rust drawer's `draw_circuit()` function (`circuit_drawer.rs:43–48`) has no `expr_len` parameter. The C API struct `CircuitDrawerConfig` (`cext/src/circuit.rs:2437–2446`) has no `expr_len` field. There is no way to pass this value to the Rust rendering engine today.
 
+**Investigative Depth (git log analysis):**
+
+Using `git log --all --oneline --follow -- qiskit/visualization/circuit/circuit_visualization.py`, I traced the exact origin of the `expr_len` gap. The parameter was introduced in commit `19862cc24` on **2023-10-18** (PR #10869: "Add display of expressions to circuit drawers," authored by Edwin Navarro — the same maintainer reviewing our Contribution 1 PR). The Rust circuit drawer (`crates/circuit/src/circuit_drawer.rs`) was not created until commit `85ecc973` on **2026-03-19** (PR #15357: "Text circuit drawer") — over two years later — and `expr_len` was simply never added when the Rust drawer was written. Using `git log --all --oneline -- crates/circuit/src/circuit_drawer.rs` confirms the file has no commit that mentions `expr_len` anywhere in its history.
+
 **Match:**
 
-The integration pattern to follow is how `cregbundle`, `merge_wires`, and `fold` are currently handled:
-- Each is a field in `CircuitDrawerConfig` (`cext/src/circuit.rs:2437–2446`)
-- `qk_circuit_draw()` extracts them from the config struct (`cext/src/circuit.rs:2492–2506`)
-- They are passed as arguments to `draw_circuit()` (`circuit_drawer.rs:43–48`)
-- `draw_circuit()` uses them to configure the rendering behavior
+The most directly analogous pattern in the Rust codebase is how `fold`, `bundle_cregs`, and `merge_wires` are currently threaded through the drawing pipeline:
+- Each is declared as a field in `CircuitDrawerConfig` (`crates/cext/src/circuit.rs:2437–2446`)
+- `qk_circuit_draw()` extracts each field from the config struct (`crates/cext/src/circuit.rs:2492–2506`) and passes it to `draw_circuit()`
+- `draw_circuit()` in `crates/circuit/src/circuit_drawer.rs:43–48` accepts them as parameters and applies them to rendering behavior
 
-`expr_len` should follow this exact same path — it is a rendering configuration parameter, not a circuit property.
+`expr_len` is structurally identical to these parameters — a scalar rendering hint with a sensible default, not a property of the circuit itself — and should follow this exact same path. No new architectural pattern is required.
 
+**Edge cases identified proactively:**
+- **`expr_len = 0`**: The Python side clamps with `max(expr_len, 0)` at `circuit_visualization.py:225` to prevent a negative value from producing a nonsensical negative-length slice. The Rust `usize` type is inherently non-negative, so negative values are impossible at the type level — but `expr_len = 0` is valid and should produce an empty label followed by `...` (i.e., the full condition is always hidden), which must be tested explicitly.
+- **Default value consistency**: The Python default is `30` (`circuit_visualization.py:416`). The Rust C API default (used when `config` is `NULL`) should be set to the same value to ensure callers get identical behavior whether they use the Python or Rust path.
+- **Interaction with control-flow support (PR #16063)**: The `expr_len` truncation only becomes visible once the Rust drawer supports `IfElseOp`/`SwitchCaseOp` rendering (currently `unimplemented!()`). The parameter should be plumbed through now so no second pass is needed when #16063 lands.
 **Plan:**
 
 1. Add `expr_len: usize` field to `CircuitDrawerConfig` in `crates/cext/src/circuit.rs` (after the existing `fold` field). Document it in the struct's C API docstring the same way `fold` is documented.
