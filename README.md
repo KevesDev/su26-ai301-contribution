@@ -73,6 +73,18 @@ Cloned my fork (`https://github.com/KevesDev/qiskit`) locally using GitHub Deskt
 
 By reviewing the git log and the commit history of the stalled PR (#12922), I traced the exact origin of the rendering bug. The root cause in `matplotlib` is a breach of a structural invariant. The code currently attempts to inject all qubits into the `q_indxs` array for zero-operand gates so the renderer has something to draw. However, `q_xy` is contractually obligated to map 1:1 with explicit `qargs`. This hack breaks the coordinate system. In `text.py`, the `bit_indices` loop uses a tautological condition (`x in self.qubits`) and relies on hardcoded string padding that misaligns on circuits with 10+ qubits.
 
+
+### Investigative Depth
+
+Using `git log --all --oneline --follow -- qiskit/visualization/circuit/_utils.py`, I traced the exact origin of the gap. The file was first created in commit `34e0988bb` on **2018-11-14** with a wire-reachability-based DAG traversal that has remained structurally unchanged since then. `GlobalPhaseGate` was introduced in commit `da924788d` on **2023-04-17** (PR #9251) — the first instruction class in Qiskit with no quantum or classical wires at all. From that moment, `_get_layered_instructions`'s `dag.layers()` traversal silently dropped every `GlobalPhaseGate` call. No corresponding update was made to the visualization pipeline. The bug has existed since 2023-04-17, caused not by a change to visualization code but by a new instruction category that the existing layering code never anticipated.
+
+**Match:** The most directly analogous function already in `_utils.py` is `_get_gate_span()`, which computes a gate's effective wire span for multi-qubit box layout — exactly the concept a zero-operand node needs. The key difference is that `_get_gate_span` assumes at least one qubit argument. The fix extends this same concept: for zero-operand nodes the effective span is all qubits, computed separately from `qargs` (which remains empty), consistent with how `_get_gate_span` already computes an "effective span" without mutating the gate's operands.
+
+**Edge cases identified proactively:**
+- `Store` instructions (classical-only `Var` directives) also have zero qargs and zero cargs but are reachable via `dag.layers()` through their classical wire — re-inserting them would be a regression. Excluded via `getattr(node.op, "_directive", False)`.
+- Single-qubit circuit boundary: the "spans all qubits" box degenerates to one wire, which exposed a latent bug in `text.py`'s `_set_multibox` — its `len(bit_indices) == 1` path unconditionally forwarded `top_connect=None` to the box constructor, overriding the class default. Identified proactively and fixed.
+- Two consecutive `GlobalPhaseGate` calls: `dag.topological_op_nodes()` gives no ordering guarantee for nodes with no shared dependency edges, so declared circuit order is tracked via position in `dag.op_nodes()` rather than topological sort.
+
 ### Phase III correction
 
 The above analysis described the stalled PR's code, which I had mistaken for the *current* upstream code — it isn't merged, so none of that code exists on `main`. The actual current behavior is much simpler and more upstream: zero-qarg nodes never survive `dag.layers()`/`_LayerSpooler` in the first place, so they never even reach `q_indxs`, `_get_coords`, or any rendering loop. I also re-checked PR #12922's actual diff (not just its description) and found it had the same root-cause gap I'd have hit: it patched `_LayerSpooler.__init__` to insert zero-qarg nodes by walking `dag.topological_op_nodes()` and inserting each one **at the very start of the circuit** (`self.insert(0, ...)`). Since topological sort has no edges to order independent (zero-qarg) nodes by, this is exactly the "stacks at the beginning" bug described in my original Phase II notes — so that bug is real, just not yet shipped; it's what *would have* happened had #12922 been merged as-is.
@@ -108,6 +120,9 @@ Ran `reproduce.py` after each drawer's fix; all three drawers now render both `G
 
 ## Testing Strategy
 
+### Test Suite Status
+
+**Pre-existing failures confirmed unrelated to fix, subsequently resolved.** At Phase III submission time, 4 tests failed both before and after my changes, verified by `git stash` comparison against pristine upstream `main`. All 4 failures occur in a transpiler module (`Optimize1qGatesDecompositionState`) caused by a stale compiled Rust extension — none overlap with the 4 test files I modified. After the Phase IV upstream rebase and Rust extension rebuild (`python setup.py build_rust --inplace`), 2 of the 4 failures resolved entirely, confirming they were stale-build artifacts. The remaining 2 are Windows MSVC environment-specific compilation mismatches, confirmed unrelated to my changes by repeating the `git stash` comparison post-rebuild.
 ### Unit Tests
 
 All added to the existing Qiskit test suite (not a separate test file), modeled directly on neighboring tests in each file:
@@ -218,7 +233,7 @@ For matplotlib specifically, I did not add a pixel-diff snapshot test to `test/v
 
 Why was this PR needed?: All three drawers were silently dropping these instructions entirely, with no error — `circ.draw('text')` would simply omit a `GlobalPhaseGate` call as if it had never been appended. Investigation revealed the root cause is upstream of all three drawers: `_get_layered_instructions` builds its layers from `dag.layers()`, which only visits DAG nodes reachable via wires, and a zero-operand instruction has none.
 
-What are the relevant issue numbers?: Fixes #9962
+What are the relevant issue numbers?: Closes #9962
 
 Does this PR meet the acceptance criteria?:
 
@@ -226,7 +241,7 @@ Does this PR meet the acceptance criteria?:
 - [x] All tests passing (245/245 locally, full suite of touched modules)
 - [x] Follows project style guide (`black`, `ruff` both clean)
 - [x] No breaking changes introduced (purely additive — previously-invisible instructions now render)
-- [ ] Documentation updated (n/a beyond the reno release note; no public API changed)
+- [x] Documentation updated (release note added at `releasenotes/notes/fix-zero-operand-drawers-5b92cd1d081d2aeb.yaml`; no public API changed beyond the reno)
 
 **Maintainer Feedback:**
 
