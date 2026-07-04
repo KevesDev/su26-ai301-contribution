@@ -273,7 +273,7 @@ Rebasing onto 36 upstream commits and rebuilding the Rust extension wasn't just 
 **Contribution Number:** 2
 **Student:** Stan Riane Nelson
 **Issue:** [Qiskit/qiskit#16464](https://github.com/Qiskit/qiskit/issues/16464) (specifically the `expr_len` sub-task)
-**Status:** Phase I Complete
+**Status:** Phase II Complete
 
 ---
 
@@ -287,7 +287,156 @@ Before claiming, I ran the full issue-selection checklist: I confirmed the under
 
 `QuantumCircuit.draw()` supports an `expr_len` parameter (default 30) that truncates long boolean/classical `Expr` conditions (used in `IfElseOp`/`SwitchCaseOp` targets) when rendering circuits, so control-flow conditions don't blow out the width of a text-drawn circuit. The Python text drawer already implements this. The Rust circuit drawer — which Qiskit intends to eventually replace the Python text drawer with for lower maintenance cost and better interoperability — does not yet support it, meaning any circuit drawn via the Rust path with a long classical expression in a control-flow condition will render it in full rather than truncating it, breaking feature parity with the existing Python behavior.
 
-## Next Steps (Phase II)
+---
 
-- Fork created: [KevesDev/qiskit](https://github.com/KevesDev/qiskit) (reused from Contribution 1)
-- Plan to trace `_text_circuit_drawer` in `qiskit/visualization/circuit/circuit_visualization.py` and the Rust-side `build_layers`/`VisualizationMatrix` in `crates/circuit/src/circuit_drawer.rs`, following the same integration pattern used in the recently-merged `measure_arrows` PR (#16414).
+## Reproduction Process
+
+### Environment Setup
+
+Reused the development environment from Contribution 1 (fork at [KevesDev/qiskit](https://github.com/KevesDev/qiskit), Python virtual environment with `pip install -e '.[visualization]'`). Synced `main` to upstream before branching — the upstream pull brought 42 new commits including Rust-side changes, which invalidated the locally compiled extension. Rebuilt with `python setup.py build_rust --inplace` (~70 seconds) before running any reproduction.
+
+Working branch: [KevesDev/qiskit — fix-issue-16464](https://github.com/KevesDev/qiskit/tree/fix-issue-16464)
+
+### Steps to Reproduce
+
+The following steps demonstrate both sides of the gap: the Python text drawer behavior that needs to be replicated, and the Rust API that is currently missing the parameter.
+
+**Demonstrating Python text drawer `expr_len` truncation (the behavior the Rust drawer must match):**
+
+1. Install Qiskit from source in a virtual environment: `pip install -e '.[visualization]'`
+2. In a Python session, build a circuit with a nested classical `Expr` condition (this produces a condition string longer than the default 30-character limit):
+
+```python
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+from qiskit.circuit.classical import expr
+
+qr = QuantumRegister(2, "q")
+cr = ClassicalRegister(4, "c")
+qc = QuantumCircuit(qr, cr)
+qc.h(0)
+qc.cx(0, 1)
+qc.measure([0, 1], [0, 1])
+
+condition = expr.logic_and(
+    expr.logic_and(expr.lift(cr[0]), expr.lift(cr[1])),
+    expr.logic_and(expr.lift(cr[2]), expr.lift(cr[3])),
+)
+with qc.if_test(condition):
+    qc.x(0)
+```
+
+3. Call `qc.draw("text", expr_len=8)` and observe the condition label is truncated at 8 characters:
+
+```
+     ┌───┐     ┌─┐   ┌────────────────── ┌───┐ ───────┐
+q_0: ┤ H ├──■──┤M├───┤ If-0 c[0] && ...  ┤ X ├  End-0 ├─
+     └───┘┌─┴─┐└╥┘┌─┐└────────╥───────── └───┘ ───────┘
+q_1: ─────┤ X ├─╫─┤M├─────────╫─────────────────────────
+          └───┘ ║ └╥┘     ┌───╨────┐
+c: 4/═══════════╩══╩══════╡ [expr] ╞════════════════════
+                0  1      └────────┘
+```
+
+4. Call `qc.draw("text", expr_len=100)` and observe the full condition label is shown without truncation:
+
+```
+     ┌───┐     ┌─┐   ┌───────────────────────────────────── ┌───┐ ───────┐
+q_0: ┤ H ├──■──┤M├───┤ If-0 c[0] && c[1] && (c[2] && c[3])  ┤ X ├  End-0 ├─
+     └───┘┌─┴─┐└╥┘┌─┐└──────────────────╥────────────────── └───┘ ───────┘
+q_1: ─────┤ X ├─╫─┤M├───────────────────╫──────────────────────────────────
+          └───┘ ║ └╥┘               ┌───╨────┐
+c: 4/═══════════╩══╩════════════════╡ [expr] ╞═════════════════════════════
+                0  1                └────────┘
+```
+
+**Demonstrating the Rust drawer API gap:**
+
+5. Open `crates/circuit/src/circuit_drawer.rs` at lines 43–48. Observe that the `draw_circuit()` function signature has no `expr_len` parameter:
+
+```rust
+pub fn draw_circuit(
+    circuit: &CircuitData,
+    cregbundle: bool,
+    mergewires: bool,
+    fold: Option<usize>,
+) -> PyResult<String>
+```
+
+6. Open `crates/cext/src/circuit.rs` at lines 2437–2446. Observe that the `CircuitDrawerConfig` struct — the C API surface that callers use to configure the drawer — has no `expr_len` field:
+
+```rust
+pub struct CircuitDrawerConfig {
+    bundle_cregs: bool,
+    merge_wires: bool,
+    fold: usize,
+}
+```
+
+**Expected:** The Rust drawer's `draw_circuit()` function and its `CircuitDrawerConfig` struct should have an `expr_len` field so that callers can control truncation of classical expression labels, matching the Python text drawer's existing behavior.
+
+**Actual:** Neither `draw_circuit()` nor `CircuitDrawerConfig` accept `expr_len`. When the Rust drawer is eventually used as a drop-in replacement for the Python text drawer, passing `expr_len` to `QuantumCircuit.draw()` will have no effect on the Rust rendering path.
+
+---
+
+## Solution Approach
+
+### Implementation Plan
+
+**Understand:**
+
+The `expr_len` parameter (default `30`) controls how many characters are shown for classical `Expr` conditions in control-flow operations (`IfElseOp`, `WhileLoopOp`, `SwitchCaseOp`). In the Python path, `circuit_visualization.py:416` declares it, `circuit_visualization.py:225` clamps it to non-negative, and it flows into `TextDrawing.__init__` (`text.py:714`), where it is stored (`text.py:735`) and applied at `text.py:1349–1350`:
+
+```python
+if len(self._expr_text) > self.expr_len:
+    self._expr_text = self._expr_text[: self.expr_len] + "..."
+```
+
+The Rust drawer's `draw_circuit()` function (`circuit_drawer.rs:43–48`) has no `expr_len` parameter. The C API struct `CircuitDrawerConfig` (`cext/src/circuit.rs:2437–2446`) has no `expr_len` field. There is no way to pass this value to the Rust rendering engine today.
+
+**Match:**
+
+The integration pattern to follow is how `cregbundle`, `merge_wires`, and `fold` are currently handled:
+- Each is a field in `CircuitDrawerConfig` (`cext/src/circuit.rs:2437–2446`)
+- `qk_circuit_draw()` extracts them from the config struct (`cext/src/circuit.rs:2492–2506`)
+- They are passed as arguments to `draw_circuit()` (`circuit_drawer.rs:43–48`)
+- `draw_circuit()` uses them to configure the rendering behavior
+
+`expr_len` should follow this exact same path — it is a rendering configuration parameter, not a circuit property.
+
+**Plan:**
+
+1. Add `expr_len: usize` field to `CircuitDrawerConfig` in `crates/cext/src/circuit.rs` (after the existing `fold` field). Document it in the struct's C API docstring the same way `fold` is documented.
+
+2. Update `qk_circuit_draw()` in the same file to extract `config.expr_len` and pass it through to `draw_circuit()`. Default value when `config` is `NULL`: `30` (matching the Python default in `circuit_visualization.py:416`).
+
+3. Add `expr_len: usize` parameter to `draw_circuit()` in `crates/circuit/src/circuit_drawer.rs`. Pass it through to `TextDrawer`.
+
+4. Store `expr_len` in the `TextDrawer` struct and apply truncation wherever classical expression label text is built — specifically in the code path that will handle `IfElseOp`/control-flow conditions when PR #16063 (control flow support for the Rust drawer) lands. Even if that code path currently returns `unimplemented!()`, plumbing `expr_len` through now means it will be ready when control flow support is added, without requiring a second pass.
+
+5. Add a Rust unit test in `circuit_drawer.rs` asserting that label text generated from a long classical expression is truncated to `expr_len` characters plus `...` when `expr_len` is set to a small value, and left untruncated when `expr_len` is large.
+
+**Implement:**
+
+Working branch: [KevesDev/qiskit — fix-issue-16464](https://github.com/KevesDev/qiskit/tree/fix-issue-16464) *(Phase III implementation in progress)*
+
+**Review:**
+
+Will follow Qiskit's `CONTRIBUTING.md` conventions: Rust code formatted with `rustfmt`, linted with `clippy`, no `unsafe` blocks outside of already-established `unsafe extern "C"` boundary functions. Commit messages will follow the project's imperative-style convention (`Add expr_len parameter to Rust circuit drawer`). The `PULL_REQUEST_TEMPLATE.md` AI/LLM disclosure checkboxes will be filled in (Claude Code / Sonnet 4.6, reviewed and approved by me).
+
+**Evaluate:**
+
+- Rust unit test: call `draw_circuit()` on a circuit whose label includes a long expression string, and assert the output contains the truncated form when `expr_len` is small.
+- Python integration check: call `qc.draw("text", expr_len=8)` on a circuit with a long conditional expression and confirm the output is truncated — this exercises the Python path and will continue to work unchanged.
+- Run the full visualization test suite (`python -m pytest test/python/visualization/`) to confirm no regressions in Python-side behavior.
+- Once PR #16063 merges (control-flow support for Rust drawer), manually verify that a Rust-path draw of a circuit with a long `IfElseOp` condition correctly applies `expr_len` truncation.
+
+---
+
+## Resources Used
+
+- [Qiskit issue #16464](https://github.com/Qiskit/qiskit/issues/16464) — the tracking issue this sub-task is drawn from.
+- [PR #16414](https://github.com/Qiskit/qiskit/pull/16414) (`measure_arrows` — merged) — reference for how a similar API parameter gap was addressed on the Python side.
+- [PR #16465](https://github.com/Qiskit/qiskit/pull/16465) (`plot_barriers`, `initial_state`) — a WIP PR for two other gaps in the same issue; reviewed to understand the scope of what's already in flight.
+- [PR #16063](https://github.com/Qiskit/qiskit/pull/16063) — WIP control-flow support for the Rust drawer; the code path where `expr_len` will eventually be applied.
+- `crates/circuit/src/circuit_drawer.rs` and `crates/cext/src/circuit.rs` — the two Rust files that will be modified.
+- `qiskit/visualization/circuit/circuit_visualization.py` (line 416) and `qiskit/visualization/circuit/text.py` (lines 714, 735, 1349–1350) — the Python reference implementation showing the expected behavior.
