@@ -288,7 +288,7 @@ Rebasing onto 36 upstream commits and rebuilding the Rust extension wasn't just 
 **Contribution Number:** 2
 **Student:** Stan Riane Nelson
 **Issue:** [Qiskit/qiskit#16464](https://github.com/Qiskit/qiskit/issues/16464) (specifically the `expr_len` sub-task)
-**Status:** Phase II Complete
+**Status:** Phase III Complete — Build
 
 ---
 
@@ -439,7 +439,7 @@ The most directly analogous pattern in the Rust codebase is how `fold`, `bundle_
 
 **Implement:**
 
-Working branch: [KevesDev/qiskit — fix-issue-16464](https://github.com/KevesDev/qiskit/tree/fix-issue-16464) *(Phase III implementation in progress)*
+Working branch: [KevesDev/qiskit — fix-issue-16464](https://github.com/KevesDev/qiskit/tree/fix-issue-16464) *(Phase III complete — see Implementation Notes below)*
 
 **Review:**
 
@@ -453,6 +453,60 @@ Will follow Qiskit's `CONTRIBUTING.md` conventions: Rust code formatted with `ru
 - Once PR #16063 merges (control-flow support for Rust drawer), manually verify that a Rust-path draw of a circuit with a long `IfElseOp` condition correctly applies `expr_len` truncation.
 
 ---
+
+---
+
+## Implementation Notes
+
+### Week 5 Progress (2026-07-09)
+
+**What I built:**
+
+Implemented `expr_len` support across the Rust circuit drawer in three focused commits on branch [`fix-issue-16464`](https://github.com/KevesDev/qiskit/tree/fix-issue-16464):
+
+**Commit 1 — API threading** ([`da74e278b`](https://github.com/KevesDev/qiskit/commit/da74e278b)): Added `expr_len: usize` to the entire rendering pipeline:
+- `CircuitDrawerConfig` struct in `crates/cext/src/circuit.rs` (C API surface), with a doc comment matching the style of the existing `fold` field, and the C API example updated to `{false, true, 0, 30}`
+- `qk_circuit_draw()` function body: extracts `config.expr_len`; uses default `30` when `config` is `NULL` — matching `circuit_visualization.py:416`'s Python default
+- `draw_circuit()` signature in `crates/circuit/src/circuit_drawer.rs` (new last parameter)
+- `TextDrawer` struct (new `expr_len: usize` field) and `from_visualization_matrix()` (new parameter, stored on construction)
+- All 18 existing test call sites updated to pass `30` as the `expr_len` argument
+
+**Commit 2 — Truncation helper** ([`b6acbb0bd`](https://github.com/KevesDev/qiskit/commit/b6acbb0bd)): Added the grapheme-cluster-aware truncation logic:
+- `truncate_to_expr_len(text: &str, max_chars: usize) -> String`: standalone free function using `UnicodeSegmentation::graphemes()` (already imported at line 28 of `circuit_drawer.rs`) to split on grapheme-cluster boundaries rather than bytes or scalar values — the same correctness guarantee that Unicode-aware Python's `str` slicing gives
+- `TextDrawer::truncate_expr_label(&self, text: &str)`: thin method calling `truncate_to_expr_len(text, self.expr_len)`, with a doc comment pointing to where in `get_label()` it should be called when PR #16063 (control-flow ops for the Rust drawer) lands
+- Both items carry `#[allow(dead_code)]` — this is intentional infrastructure: the function is correct and tested, but the call site (`get_label()`'s control-flow arm) is currently `unimplemented!()` until #16063 merges
+
+**Commit 3 — Unit tests** ([`28b02d045`](https://github.com/KevesDev/qiskit/commit/28b02d045)): Five tests for `truncate_to_expr_len`, all in the existing `#[cfg(test)]` block in `circuit_drawer.rs`:
+- `test_truncate_expr_len_below_limit` — string shorter than limit: returned unchanged
+- `test_truncate_expr_len_at_boundary` — string at exactly the limit: returned unchanged (boundary condition)
+- `test_truncate_expr_len_exceeds_limit` — long expression truncated with `"..."` appended
+- `test_truncate_expr_len_zero` — `max_chars=0` edge case: every non-empty string becomes `"..."` (the maximum-hiding case)
+- `test_truncate_expr_len_multibyte_grapheme_clusters` — `"α && β && γ"` truncated at 4 grapheme clusters yields `"α &&..."`, verifying multi-byte characters count as single display units
+
+All 27 circuit drawer tests (22 pre-existing + 5 new) pass with no regressions.
+
+**Engineering decisions:**
+
+- **Grapheme clusters, not bytes**: Python's `str[:n]` slices on Unicode scalar values; Rust `&str` slices on bytes. Both are wrong for display-aware truncation. Using `UnicodeSegmentation::graphemes()` is the correct Rust analogue — a combining character sequence (e.g. an emoji with a skin-tone modifier) counts as one display unit, not two or more, which matches what a human would expect when reading the rendered circuit. The `unicode_segmentation` crate is already a dependency and already imported in this file.
+- **Standalone free function, not only a method**: `truncate_to_expr_len` is a pure function with no `self` dependency. Making it standalone (instead of a `TextDrawer` method) means the unit tests can call it directly without constructing a full `TextDrawer` (which requires a `VisualizationMatrix` and circuit). The `TextDrawer::truncate_expr_label` method is a thin `self.expr_len`-aware wrapper for use in rendering code.
+- **`usize` type absorbs the Python clamping**: Python clamps `expr_len` with `max(expr_len, 0)` at `circuit_visualization.py:225` to prevent negative values. Rust's `usize` is inherently non-negative, so the clamping is implicit at the type level. The `expr_len=0` case (which Python can hit via `max(expr_len, 0)` when someone passes a negative value) is explicitly tested.
+- **`#[allow(dead_code)]` over removing the code**: Removing the truncation helper until #16063 lands would make `expr_len` a parameter that's accepted but entirely ignored (no implementation whatsoever), which would be misleading. Keeping the helper with a `dead_code` allow makes the intent explicit to a reviewer and avoids a second PR just to add the truncation function once control-flow ops land.
+
+**Challenges faced:**
+
+- **Call-site churn from a signature change**: Adding `expr_len` to `draw_circuit()` required updating every test call site in the same commit to keep the code compiling. There are 18 call sites with 9 distinct argument combinations; updated all of them with targeted `replace_all` edits.
+- **Dead code in a two-phase implementation**: The Rust compiler warns about unused struct fields and unused methods. Since `TextDrawer.expr_len` is written (in `from_visualization_matrix`) but not yet read (because `truncate_expr_label` is not yet called from anywhere), the field also draws a warning transitively. Resolved with explicit `#[allow(dead_code)]` on both the field and the method, with a doc comment explaining why.
+
+### Code Changes
+
+- **Files modified:**
+  * `crates/circuit/src/circuit_drawer.rs` — `draw_circuit()` signature, `TextDrawer` struct, `from_visualization_matrix()`, `truncate_to_expr_len()` helper, `truncate_expr_label()` method, 18 test call sites, 5 new unit tests
+  * `crates/cext/src/circuit.rs` — `CircuitDrawerConfig` struct (`expr_len` field + doc comment), `qk_circuit_draw()` extraction and default, C API example updated
+- **Key commits** (branch: [`fix-issue-16464`](https://github.com/KevesDev/qiskit/tree/fix-issue-16464)):
+  * [`da74e278b`](https://github.com/KevesDev/qiskit/commit/da74e278b) — Add expr_len parameter to Rust circuit drawer API
+  * [`b6acbb0bd`](https://github.com/KevesDev/qiskit/commit/b6acbb0bd) — Add truncate_to_expr_len helper for classical expression label truncation
+  * [`28b02d045`](https://github.com/KevesDev/qiskit/commit/28b02d045) — Add unit tests for truncate_to_expr_len and silence infrastructure warnings
+
 
 ## Resources Used
 
