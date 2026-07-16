@@ -288,7 +288,7 @@ Rebasing onto 36 upstream commits and rebuilding the Rust extension wasn't just 
 **Contribution Number:** 2
 **Student:** Stan Riane Nelson
 **Issue:** [Qiskit/qiskit#16464](https://github.com/Qiskit/qiskit/issues/16464) (specifically the `expr_len` sub-task)
-**Status:** Phase III Complete — Build
+**Status:** Phase IV Complete — Awaiting Review
 
 ---
 
@@ -506,6 +506,36 @@ All 27 circuit drawer tests (22 pre-existing + 5 new) pass with no regressions.
   * [`da74e278b`](https://github.com/KevesDev/qiskit/commit/da74e278b) — Add expr_len parameter to Rust circuit drawer API
   * [`b6acbb0bd`](https://github.com/KevesDev/qiskit/commit/b6acbb0bd) — Add truncate_to_expr_len helper for classical expression label truncation
   * [`28b02d045`](https://github.com/KevesDev/qiskit/commit/28b02d045) — Add unit tests for truncate_to_expr_len and silence infrastructure warnings
+
+
+---
+
+## Pull Request
+
+**PR Link:** [Qiskit/qiskit#16593](https://github.com/Qiskit/qiskit/pull/16593)
+
+**PR Description:**
+
+*What does this PR do?*: Adds an `expr_len` parameter to the Rust circuit drawer, closing the feature-parity gap with the Python text drawer identified in #16464. The parameter is threaded through the full rendering pipeline (`CircuitDrawerConfig`, `qk_circuit_draw()`, `draw_circuit()`, `TextDrawer`) with a grapheme-cluster-aware `truncate_to_expr_len()` helper ready to activate when PR #16063 adds control-flow op support.
+
+*Why was this PR needed?*: `expr_len` exists in the Python text drawer since 2023 (PR #10869). The Rust drawer was written in 2026 (PR #15357) without it. Without this fix, passing `expr_len` to `QuantumCircuit.draw()` would have had no effect on the Rust rendering path.
+
+*Relevant issue numbers*: Part of #16464 (`expr_len` sub-task). Used "Part of" rather than "Closes" because #16464 is a multi-task tracking issue — closing it from this PR would orphan the remaining sub-tasks.
+
+**Acceptance criteria:**
+- [x] Tests added (5 new unit tests for `truncate_to_expr_len`)
+- [x] All tests passing (27/27 circuit drawer tests)
+- [x] Follows project style guide (no `rustfmt`/`clippy` warnings)
+- [x] No breaking changes
+- [x] Documentation updated (C API doc comment + `reno` release note at `releasenotes/notes/rust-drawer-expr-len-16464-a3c7f91d2e084b5c.yaml`)
+
+**Maintainer Feedback:**
+
+- 2026-07-16: PR opened, requested review from @eliarbel in a PR comment (most frequent contributor to both changed files, and the maintainer who opened the tracking issue).
+- 2026-07-16: Before any maintainer response, proactively pushed a 4th commit adding a `reno` release note after re-reading `CONTRIBUTING.md` and noting the "end user facing impact" requirement. Updated all acceptance-criteria checkboxes accordingly.
+- Awaiting review.
+
+**Status:** Awaiting review
 
 
 ## Resources Used
