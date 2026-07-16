@@ -546,3 +546,39 @@ All 27 circuit drawer tests (22 pre-existing + 5 new) pass with no regressions.
 - [PR #16063](https://github.com/Qiskit/qiskit/pull/16063) — WIP control-flow support for the Rust drawer; the code path where `expr_len` will eventually be applied.
 - `crates/circuit/src/circuit_drawer.rs` and `crates/cext/src/circuit.rs` — the two Rust files that will be modified.
 - `qiskit/visualization/circuit/circuit_visualization.py` (line 416) and `qiskit/visualization/circuit/text.py` (lines 714, 735, 1349–1350) — the Python reference implementation showing the expected behavior.
+
+---
+---
+
+# Contribution 3: Improve error message when reverting a nonexistent Gleam package version
+
+**Contribution Number:** 3
+**Student:** Stan Riane Nelson
+**Issue:** [gleam-lang/gleam#5709](https://github.com/gleam-lang/gleam/issues/5709)
+**Fork:** [KevesDev/gleam](https://github.com/KevesDev/gleam)
+**Status:** Phase I Complete
+
+---
+
+## Why I Chose This Issue
+
+I chose issue #5709 in the Gleam compiler because it is a tightly scoped, well-specified error-message improvement in a Rust codebase — a direct continuation of the Rust work from my Contributions 1 and 2 in Qiskit. The issue was filed by a core Gleam maintainer (`@giacomocavalieri`) with an exact before/after showing what the improved message should look like, which means "done" is unambiguous from the start.
+
+I ran the full issue-selection checklist before claiming. The gleam-lang/gleam repository has 5+ PRs merged from external contributors in the 48 hours before I selected this issue, making it the most responsive repo of any candidate I evaluated. The issue is labeled `good first issue` and `help wanted`, carries no assignee, and has no open PR — a previous attempt (PR #5717) was closed without merging on July 14, 2026, two days before I claimed it, after maintainers raised a specific unanswered question about the Hex API response body. That question is well-defined, its answer directly shapes the correct implementation, and investigating it is my first Phase II task. I specifically selected this issue over other gleam candidates because it sits in the CLI publishing pipeline (`gleam hex revert`), a self-contained area I can understand quickly, and the previous attempt gives me a concrete implementation starting point alongside the exact review feedback the maintainers want addressed.
+
+**The problem in one sentence:** When `gleam hex revert` is called with a package version that does not exist on Hex, the CLI surfaces a raw, generic "Resource was not found" error from the underlying Hex client library instead of a clear, actionable message naming the specific package and version.
+
+**What fixed looks like:**
+```
+error: Hex API failure
+
+There is no version 1.234234.2 of the package birdie.
+```
+
+---
+
+## Resources Used
+
+- [gleam-lang/gleam issue #5709](https://github.com/gleam-lang/gleam/issues/5709) — the issue being addressed.
+- [PR #5717](https://github.com/gleam-lang/gleam/pull/5717) — previous closed attempt; the maintainer review comments there define the specific question Phase II must answer.
+- [gleam-lang/gleam CONTRIBUTING.md](https://github.com/gleam-lang/gleam/blob/main/CONTRIBUTING.md) — project setup and contribution guidelines.
