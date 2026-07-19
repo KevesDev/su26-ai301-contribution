@@ -556,7 +556,8 @@ All 27 circuit drawer tests (22 pre-existing + 5 new) pass with no regressions.
 **Student:** Stan Riane Nelson
 **Issue:** [gleam-lang/gleam#5709](https://github.com/gleam-lang/gleam/issues/5709)
 **Fork:** [KevesDev/gleam](https://github.com/KevesDev/gleam)
-**Status:** Phase I Complete
+**Branch:** [`fix-issue-5709`](https://github.com/KevesDev/gleam/tree/fix-issue-5709)
+**Status:** Phase II Complete
 
 ---
 
@@ -577,8 +578,81 @@ There is no version 1.234234.2 of the package birdie.
 
 ---
 
+## Phase II: Research & Implementation Plan
+
+### UMPIRE Plan
+
+**U — Understand**
+
+`gleam hex revert --package <pkg> --version <ver>` lets a package owner remove a release from Hex.pm within one hour of publishing. When the requested package/version does not exist, the Hex API returns HTTP 404. The current code at `compiler-cli/src/hex.rs:117` calls `hexpm::api_revert_release_response(response).map_err(Error::hex)?`, which converts `ApiError::NotFound` → `Error::Hex("Resource was not found")` — a generic message with no context about which package or version was missing.
+
+**M — Match**
+
+| Location | Role |
+|---|---|
+| `compiler-cli/src/hex.rs:117` | Call site for the revert response — holds `package` and `version` in scope |
+| `hexpm/src/lib.rs:593` | `api_revert_release_response()` — returns `ApiError::NotFound` for HTTP 404, discards response body |
+| `compiler-core/src/error.rs:533` | `Error::hex()` — catches all `ApiError` variants including `NotFound` and stringifies them |
+| `compiler-core/src/error.rs` (~line 430) | Where new `Error` variants and their diagnostics live |
+
+Key investigation finding: `api_revert_release_response()` discards the HTTP 404 response body entirely (unlike the 422 handler, which inspects the body via `is_late_deletion()`). Even if the Hex API sends different body content for "package not found" vs "version not found," the hexpm crate does not expose that distinction. The previous PR #5717 was asked: "can the API distinguish the two cases?" — the answer after investigation is no, not with the current implementation. The practical fix is to use the `package` and `version` already in scope at the call site.
+
+**P — Plan**
+
+1. Add `Error::HexReleaseNotFound { package: String, version: String }` to `compiler-core/src/error.rs`
+2. Add a proper `Diagnostic` for the new variant (title: "Release not found", text naming the package and version, hint to check spelling)
+3. In `compiler-cli/src/hex.rs`, pattern-match `ApiError::NotFound` at the revert call site and return the new error with context
+4. Leave the hexpm crate unchanged — `ApiError::NotFound` is the correct abstraction; gleam-specific context belongs in the caller
+
+This follows the exact same pattern as `HexPublishAccessDenied` and `HexPublishReplaceRequired`, which also capture call-site context and produce dedicated variants.
+
+**I — Implement**
+
+Changes in commit [`3a91bd7`](https://github.com/KevesDev/gleam/commit/3a91bd753):
+
+*`compiler-core/src/error.rs`* — new variant and diagnostic:
+```rust
+#[error("Hex release not found")]
+HexReleaseNotFound { package: String, version: String },
+```
+Diagnostic:
+```
+error: Release not found
+There is no version {version} of the package {package} on Hex.
+hint: Check that the package name and version are correct.
+```
+
+*`compiler-cli/src/hex.rs`* — pattern match at call site:
+```rust
+match hexpm::api_revert_release_response(response) {
+    Ok(()) => (),
+    Err(hexpm::ApiError::NotFound) => {
+        return Err(Error::HexReleaseNotFound { package, version });
+    }
+    Err(error) => return Err(Error::hex(error)),
+}
+```
+
+**R — Review**
+
+- Follows the existing `HexPublish*` error variant pattern exactly
+- No changes to the hexpm crate (correct — it's a general-purpose library used by other projects)
+- The new error message directly matches the "what fixed looks like" example from the issue
+- All other `ApiError` variants still fall through to `Error::hex()` unchanged
+- Edge cases: `ApiError::Forbidden` (user lacks permission) is handled separately and produces a different message — not conflated with "not found"
+
+**E — Evaluate**
+
+The existing hexpm test suite covers `api_revert_release_response` at lines 74–86 (`revert_release_response_success`, `revert_release_response_too_old_error`). A `revert_release_response_not_found` test case would complete coverage but the hexpm crate changes are out of scope for this PR — the behavior under 404 is already exercised by the pattern match at the call site.
+
+The fix is minimal (22 lines added, 1 changed), follows the codebase's established patterns, and directly addresses the maintainer's stated desired output in the issue.
+
+---
+
 ## Resources Used
 
 - [gleam-lang/gleam issue #5709](https://github.com/gleam-lang/gleam/issues/5709) — the issue being addressed.
 - [PR #5717](https://github.com/gleam-lang/gleam/pull/5717) — previous closed attempt; the maintainer review comments there define the specific question Phase II must answer.
 - [gleam-lang/gleam CONTRIBUTING.md](https://github.com/gleam-lang/gleam/blob/main/CONTRIBUTING.md) — project setup and contribution guidelines.
+- `hexpm/src/lib.rs:593` — `api_revert_release_response()`, the hexpm crate function whose 404 behavior was investigated to answer the maintainer's question from PR #5717.
+- `compiler-core/src/error.rs` — existing `HexPublishAccessDenied` / `HexPublishReplaceRequired` variants used as the implementation pattern.
