@@ -684,10 +684,48 @@ The fix is minimal (22 lines added, 1 changed), follows the codebase's establish
 | [`3cb1340`](https://github.com/KevesDev/gleam/commit/3cb134036) | Add test for 404 revert response and update CHANGELOG |
 
 **Active branch:** [`fix-issue-5709`](https://github.com/KevesDev/gleam/tree/fix-issue-5709)
-**Draft PR:** [gleam-lang/gleam#6028](https://github.com/gleam-lang/gleam/pull/6028)
+**PR:** [gleam-lang/gleam#6028](https://github.com/gleam-lang/gleam/pull/6028)
 
 ### Testing Strategy
 
 - Added `revert_release_response_not_found` in `hexpm/src/tests.rs` — mirrors the existing `revert_release_response_success` and `revert_release_response_too_old_error` tests directly above it, using the `make_response(404, vec![])` helper pattern
 - Full `hexpm` test suite run: **171 passed, 0 failed**
 - Existing tests confirm no regressions in the revert response handling or any other hexpm API response functions
+
+---
+
+## Phase IV: Pull Request
+
+**PR Link:** [gleam-lang/gleam#6028](https://github.com/gleam-lang/gleam/pull/6028)
+
+**PR Description:**
+
+*What does this PR do?*: Adds a `HexReleaseNotFound { package, version }` error variant to `compiler-core` and catches the `ApiError::NotFound` case at the `gleam hex revert` call site, replacing the generic "Resource was not found" message with one that names the specific package and version.
+
+*Why was this PR needed?*: When `gleam hex revert` is called with a package or version that doesn't exist on Hex, the CLI previously surfaced a raw error from the hexpm crate with no actionable context. Investigation of `api_revert_release_response()` confirmed that the 404 body is discarded entirely, so distinguishing "package not found" from "version not found" at the API level is not possible — the fix uses package/version context already available at the CLI call site, following the same pattern as `HexPublishAccessDenied` and `HexPublishReplaceRequired`.
+
+*Relevant issue numbers*: Closes #5709
+
+**Acceptance criteria:**
+- [x] Tests added (`revert_release_response_not_found` in `hexpm/src/tests.rs`)
+- [x] All tests passing (171/171 hexpm tests)
+- [x] Follows project style guide
+- [x] No breaking changes introduced
+- [x] `CHANGELOG.md` updated (required by gleam CONTRIBUTING.md)
+
+**Maintainer Feedback:**
+
+- 2026-07-23: PR opened. Tagged @lpil in a PR comment requesting review.
+- Awaiting review.
+
+**Status:** Awaiting review
+
+---
+
+## Learnings & Reflections
+
+The most valuable part of this contribution was the investigation work before writing a single line of fix code. The previous PR (#5717) was closed because a maintainer asked whether the Hex API could distinguish "package not found" from "version not found." Reading that thread told me exactly what question I needed to answer first — and the answer (the hexpm crate discards the 404 body entirely) directly shaped what the fix could and couldn't claim.
+
+The biggest technical lesson: tracing through a call stack across multiple crates to understand what information is available at each layer is more useful than guessing. `api_revert_release_response()` looked simple from the outside; reading it showed exactly why the fix had to live in the CLI layer rather than in hexpm.
+
+On the open source process side: gleam's CONTRIBUTING.md has an explicit no-AI-generated-text policy for PR descriptions and comments, which is the opposite of Qiskit's AI disclosure checkbox. Navigating that — writing the PR description myself, in my own words — was a useful exercise in owning the work rather than just generating it.
