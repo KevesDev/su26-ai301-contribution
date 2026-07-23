@@ -557,7 +557,8 @@ All 27 circuit drawer tests (22 pre-existing + 5 new) pass with no regressions.
 **Issue:** [gleam-lang/gleam#5709](https://github.com/gleam-lang/gleam/issues/5709)
 **Fork:** [KevesDev/gleam](https://github.com/KevesDev/gleam)
 **Branch:** [`fix-issue-5709`](https://github.com/KevesDev/gleam/tree/fix-issue-5709)
-**Status:** Phase II Complete
+**Draft PR:** [gleam-lang/gleam#6028](https://github.com/gleam-lang/gleam/pull/6028)
+**Status:** Phase III Complete
 
 ---
 
@@ -656,3 +657,37 @@ The fix is minimal (22 lines added, 1 changed), follows the codebase's establish
 - [gleam-lang/gleam CONTRIBUTING.md](https://github.com/gleam-lang/gleam/blob/main/CONTRIBUTING.md) — project setup and contribution guidelines.
 - `hexpm/src/lib.rs:593` — `api_revert_release_response()`, the hexpm crate function whose 404 behavior was investigated to answer the maintainer's question from PR #5717.
 - `compiler-core/src/error.rs` — existing `HexPublishAccessDenied` / `HexPublishReplaceRequired` variants used as the implementation pattern.
+
+---
+
+## Phase III: Implementation
+
+### Implementation Notes
+
+**What I built:**
+
+- `compiler-core/src/error.rs` — added `HexReleaseNotFound { package: String, version: String }` error variant with a dedicated `Diagnostic` (title: "Release not found", text naming package and version, hint to check spelling)
+- `compiler-cli/src/hex.rs` — changed the `api_revert_release_response()` call to pattern-match on `ApiError::NotFound` and return the new specific error instead of falling through to the generic `Error::hex()` handler
+- `hexpm/src/tests.rs` — added `revert_release_response_not_found` test covering the 404 case
+- `CHANGELOG.md` — added entry under "Build tool" section as required by gleam's CONTRIBUTING.md
+
+**Challenges faced:**
+
+- During Phase II investigation I confirmed that `api_revert_release_response()` discards the 404 response body entirely — unlike the 422 handler which inspects the body via `is_late_deletion()`. This meant I could not distinguish "package not found" from "version not found" and had to scope the error message accordingly. This directly answered the open question from PR #5717.
+- Gleam requires nightly Rust (uses `if let` guards in `parse.rs`). Ran `cargo test -p hexpm` rather than the full workspace to avoid toolchain issues on this machine while still exercising the relevant tests.
+
+### Code Changes
+
+| Commit | Description |
+|---|---|
+| [`3a91bd7`](https://github.com/KevesDev/gleam/commit/3a91bd753) | Add HexReleaseNotFound variant and pattern-match NotFound in hex revert |
+| [`3cb1340`](https://github.com/KevesDev/gleam/commit/3cb134036) | Add test for 404 revert response and update CHANGELOG |
+
+**Active branch:** [`fix-issue-5709`](https://github.com/KevesDev/gleam/tree/fix-issue-5709)
+**Draft PR:** [gleam-lang/gleam#6028](https://github.com/gleam-lang/gleam/pull/6028)
+
+### Testing Strategy
+
+- Added `revert_release_response_not_found` in `hexpm/src/tests.rs` — mirrors the existing `revert_release_response_success` and `revert_release_response_too_old_error` tests directly above it, using the `make_response(404, vec![])` helper pattern
+- Full `hexpm` test suite run: **171 passed, 0 failed**
+- Existing tests confirm no regressions in the revert response handling or any other hexpm API response functions
